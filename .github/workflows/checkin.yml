@@ -2,69 +2,62 @@ name: WorkBuddy 签到值守（一天一轮）
 
 on:
   schedule:
-    - cron: "0 1 * * *"        # 每天 09:00（北京时间）：签到 + 派猫猫旅行（一天仅一次）
-    - cron: "*/10 1-8 * * *"   # 09:00–17:00（北京时间）每 10 分钟：旅行巡检，已到达才领取
-  workflow_dispatch:           # 手动触发（只跑旅行巡检，不签到、不派猫）
+    - cron: "*/10 1-15 * * *"   # 北京时间 09:00–23:50，每 10 分钟一轮
+  workflow_dispatch:            # 随时手动触发
 
 concurrency:
   group: wb-checkin
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  daily:
+  keeper:
     runs-on: ubuntu-latest
-    if: github.event.schedule == '0 1 * * *'
     steps:
       - uses: actions/checkout@v4
 
-      - name: 恢复长效令牌（优先使用上次轮换后的新令牌）
+      - name: 恢复长效令牌与当日进度
         uses: actions/cache@v4
         with:
-          path: ~/.workbuddy/checkin-rt.json
-          key: wb-rt-${{ github.run_id }}
+          path: ~/.workbuddy/store
+          key: wb-store-${{ github.run_id }}
           restore-keys: |
-            wb-rt-
+            wb-store-
 
-      - name: 令牌缺失时用 Secret 初始化
+      - name: 载入令牌与进度（缓存缺失时用 Secret 兜底）
         shell: bash
         run: |
           mkdir -p ~/.workbuddy
+          if [ -s ~/.workbuddy/store/checkin-rt.json ]; then
+            cp ~/.workbuddy/store/checkin-rt.json ~/.workbuddy/checkin-rt.json
+            echo "令牌已从缓存恢复"
+          fi
+          if [ -s ~/.workbuddy/store/state.json ]; then
+            cp ~/.workbuddy/store/state.json ~/.workbuddy/state.json
+            echo "当日进度已从缓存恢复"
+          fi
           if [ ! -s ~/.workbuddy/checkin-rt.json ]; then
             printf '%s' "$WB_RT" > ~/.workbuddy/checkin-rt.json
-            echo "token seeded from secret"
+            echo "令牌已从 Secret 初始化"
           fi
         env:
           WB_RT: ${{ secrets.WB_RT }}
 
-      - name: 签到 + 派猫猫旅行（一天一次）
+      - name: 执行当天任务（一天一轮）
         shell: bash
-        run: python3 scripts/auto_checkin.py
+        run: python3 scripts/once_a_day.py
 
-  travel:
-    runs-on: ubuntu-latest
-    if: github.event.schedule == '*/10 1-8 * * *' || github.event_name == 'workflow_dispatch'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: 恢复长效令牌
-        uses: actions/cache@v4
-        with:
-          path: ~/.workbuddy/checkin-rt.json
-          key: wb-rt-${{ github.run_id }}
-          restore-keys: |
-            wb-rt-
-
-      - name: 令牌缺失时用 Secret 初始化
+      - name: 回存轮换后的令牌与当日进度
+        if: always()
         shell: bash
         run: |
-          mkdir -p ~/.workbuddy
-          if [ ! -s ~/.workbuddy/checkin-rt.json ]; then
-            printf '%s' "$WB_RT" > ~/.workbuddy/checkin-rt.json
-            echo "token seeded from secret"
+          mkdir -p ~/.workbuddy/store
+          if [ -s ~/.workbuddy/checkin-rt.json ]; then
+            cp ~/.workbuddy/checkin-rt.json ~/.workbuddy/store/checkin-rt.json
           fi
-        env:
-          WB_RT: ${{ secrets.WB_RT }}
-
-      - name: 旅行巡检（只读状态 + 已到达才领取，绝不派遣）
-        shell: bash
-        run: python3 scripts/travel_keeper.py
+          if [ -s ~/.workbuddy/state.json ]; then
+            cp ~/.workbuddy/state.json ~/.workbuddy/store/state.json
+          fi
+          echo "已回存，供下一轮使用"
