@@ -1,0 +1,70 @@
+name: WorkBuddy 签到值守（一天一轮）
+
+on:
+  schedule:
+    - cron: "0 1 * * *"        # 每天 09:00（北京时间）：签到 + 派猫猫旅行（一天仅一次）
+    - cron: "*/10 1-8 * * *"   # 09:00–17:00（北京时间）每 10 分钟：旅行巡检，已到达才领取
+  workflow_dispatch:           # 手动触发（只跑旅行巡检，不签到、不派猫）
+
+concurrency:
+  group: wb-checkin
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 1 * * *'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 恢复长效令牌（优先使用上次轮换后的新令牌）
+        uses: actions/cache@v4
+        with:
+          path: ~/.workbuddy/checkin-rt.json
+          key: wb-rt-${{ github.run_id }}
+          restore-keys: |
+            wb-rt-
+
+      - name: 令牌缺失时用 Secret 初始化
+        shell: bash
+        run: |
+          mkdir -p ~/.workbuddy
+          if [ ! -s ~/.workbuddy/checkin-rt.json ]; then
+            printf '%s' "$WB_RT" > ~/.workbuddy/checkin-rt.json
+            echo "token seeded from secret"
+          fi
+        env:
+          WB_RT: ${{ secrets.WB_RT }}
+
+      - name: 签到 + 派猫猫旅行（一天一次）
+        shell: bash
+        run: python3 scripts/auto_checkin.py
+
+  travel:
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '*/10 1-8 * * *' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 恢复长效令牌
+        uses: actions/cache@v4
+        with:
+          path: ~/.workbuddy/checkin-rt.json
+          key: wb-rt-${{ github.run_id }}
+          restore-keys: |
+            wb-rt-
+
+      - name: 令牌缺失时用 Secret 初始化
+        shell: bash
+        run: |
+          mkdir -p ~/.workbuddy
+          if [ ! -s ~/.workbuddy/checkin-rt.json ]; then
+            printf '%s' "$WB_RT" > ~/.workbuddy/checkin-rt.json
+            echo "token seeded from secret"
+          fi
+        env:
+          WB_RT: ${{ secrets.WB_RT }}
+
+      - name: 旅行巡检（只读状态 + 已到达才领取，绝不派遣）
+        shell: bash
+        run: python3 scripts/travel_keeper.py
