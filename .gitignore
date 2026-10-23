@@ -1,0 +1,4 @@
+*.log
+notify_config.json
+checkin-rt.json
+checkin-cred.json
