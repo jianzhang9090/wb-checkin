@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   keeper:
@@ -61,3 +61,24 @@ jobs:
             cp ~/.workbuddy/state.json ~/.workbuddy/store/state.json
           fi
           echo "已回存，供下一轮使用"
+
+      - name: 保活提交（防止仓库 60 天无活动导致定时任务被停用）
+        if: always() && github.event_name == 'schedule'
+        shell: bash
+        run: |
+          today=$(TZ=Asia/Shanghai date +%Y-%m-%d)
+          mkdir -p .keepalive
+          prev=$(cat .keepalive/last-run.txt 2>/dev/null || echo "1970-01-01")
+          days=$(( ( $(date -d "$today" +%s) - $(date -d "$prev" +%s) ) / 86400 ))
+          if [ "$days" -ge 7 ]; then
+            echo "$today" > .keepalive/last-run.txt
+            git config user.name "wb-keeper"
+            git config user.email "wb-keeper@users.noreply.github.com"
+            git add .keepalive/last-run.txt
+            git commit -m "chore: keepalive $today"
+            git pull --rebase origin main
+            git push origin HEAD:main
+            echo "已写入保活提交"
+          else
+            echo "距上次保活仅 ${days} 天，跳过"
+          fi
